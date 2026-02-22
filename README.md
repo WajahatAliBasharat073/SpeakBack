@@ -1,33 +1,51 @@
-# SpeakBack - AI Aphasia Therapy
+# SpeakBack - Agent-Based AI Aphasia Therapy
 
-SpeakBack is research-driven assistive application designed to help people with expressive aphasia practice speech through Gemini-powered live interactions.
+SpeakBack is a **real-time, agentic assistive application** designed to help individuals with expressive aphasia. Built using the **Gemini Multimodal Live API**, it provides a low-latency, voice-to-voice, and vision-to-voice therapy experience.
 
-## 🚀 One-Click Setup (Web)
+## 🤖 Agent-Based Architecture
 
-### 1. Backend Setup
+Unlike traditional chatbots, SpeakBack operates as a **multimodal agent**:
+
+- **Real-Time Perception**: Continuously listens to audio and "sees" through the camera to provide contextual therapy.
+- **Bilateral Interaction**: Uses Gemini's native audio generation for natural, back-and-forth conversation.
+- **Clinical Guardrails**: Implements research-driven safety layers and cueing hierarchies (Phonemic, Semantic hints).
+- **Proactive Support**: Detects therapeutic roadblocks and adjusts difficulty in real-time.
+
+## ✨ Key Features
+
+- **🎙️ Live Multimodal Sessions**: Real-time voice and video therapy sessions powered by the `gemini-2.5-flash-native-audio` model.
+- **🚨 Needs Bar (AAC)**: High-contrast, interactive needs bar for instant communication of basic requirements.
+- **📰 AI News Podcast Agent**: Automatically researches and summarizes the latest news into simplified, functional reading exercises.
+- **📊 Caregiver Intelligence**: Real-time transcription and success metrics (naming accuracy, session intensity) stored in Firebase.
+- **🌍 Multilingual Intelligence**: Native support for English, Urdu, and Spanish.
+
+## 🚀 Setup & Installation
+
+### 1. Backend (FastAPI Agent Server)
+
 ```bash
 cd backend
 python -m pip install -r requirements.txt
 python main.py
 ```
-*Note: The app runs in **Demo Mode** by default. To enable AI speech, add your `GOOGLE_API_KEY` to `backend/.env`.*
 
-### 2. Frontend Setup
+*Requires a `GOOGLE_API_KEY` in `backend/.env` for Live API features.*
+
+### 2. Frontend (Expo Mobile App)
+
 ```bash
 cd frontend
 npm install
-npx expo start --web
+npx expo start
 ```
 
-## ✨ Key Features
-- **Live Gemini Therapy**: Interactive naming and gesture exercises.
-- **Emergency AAC Bar**: Large, high-contrast buttons for urgent needs (Water, Bathroom, etc.).
-- **Daily News Reader**: Simplified, one-sentence news summaries for functional reading.
-- **Caregiver Dashboard**: Session logs, success metrics, and live transcription.
-- **Multilingual Support**: English, Urdu, Spanish, and more.
+## 🛠️ Technology Stack
 
-## 👥 Sharing with Friends
-Simply zip the folder and send it! They will need:
-1. Python 3.10+ 
-2. Node.js LTS
-3. A modern web browser (Chrome/Edge recommended)
+- **AI Engine**: Google Gemini Multimodal Live API (WebSockets)
+- **Backend**: FastAPI, Uvicorn, Python SDK (`google-genai`)
+- **Frontend**: React Native, Expo, Reanimated
+- **Database**: Firebase (Auth & Firestore)
+- **Audio/Video**: Expo-AV, Expo-Camera
+
+---
+*SpeakBack is an open-source project aimed at restoring the power of speech through advanced AI orchestration.*
