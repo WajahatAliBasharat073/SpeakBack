@@ -1,0 +1,507 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, Dimensions } from 'react-native';
+import { Audio } from 'expo-av';
+import { Camera, CameraView, useCameraPermissions } from 'expo-camera';
+import { Mic, Video, StopCircle, Play, Activity, Users, Newspaper } from 'lucide-react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, withRepeat, withTiming, FadeInUp } from 'react-native-reanimated';
+import CaregiverDashboard from './components/CaregiverDashboard';
+import Waveform from './components/Waveform';
+import ProfileSetup from './components/ProfileSetup';
+import AACBar from './components/AACBar';
+import NewsReader from './components/NewsReader';
+
+const { width } = Dimensions.get('window');
+
+// Constants for backend
+const BACKEND_URL = 'ws://YOUR_LOCAL_IP:8000/ws'; // Update with your local IP
+
+export default function App() {
+  const [mode, setMode] = useState<'patient' | 'caregiver'>('patient');
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  // ... rest of the existing state ...
+  const [status, setStatus] = useState('Idle');
+  const [isLive, setIsLive] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [targetTask, setTargetTask] = useState<string | null>(null);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [showOnboarding, setShowOnboarding] = useState(true);
+  const [showNews, setShowNews] = useState(false);
+
+  const mockNews = [
+    { id: '1', title: 'SUNNY DAY', summary: 'The sun is shining today. It is warm outside.' },
+    { id: '2', title: 'NEW APP', summary: 'We are learning to speak better together.' },
+  ];
+  const speakingTimeout = useRef<NodeJS.Timeout | null>(null);
+  const ws = useRef<WebSocket | null>(null);
+  const cameraRef = useRef<any>(null);
+
+  const [permission, requestPermission] = useCameraPermissions();
+  const [audioPermission, setAudioPermission] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { status } = await Audio.requestPermissionsAsync();
+      setAudioPermission(status === 'granted');
+      await requestPermission();
+    })();
+  }, []);
+
+  // Animation for the "LIVE" pulse
+  const pulse = useSharedValue(1);
+  useEffect(() => {
+    if (isLive) {
+      pulse.value = withRepeat(withTiming(1.2, { duration: 1000 }), -1, true);
+    } else {
+      pulse.value = 1;
+    }
+  }, [isLive]);
+
+  const animatedPulseStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pulse.value }],
+    opacity: isLive ? 1 : 0.5,
+  }));
+
+  const startSession = async () => {
+    try {
+      console.log('Starting session...');
+      setIsLive(true);
+      setStatus('Connecting to Gemini...');
+
+      // 1. Setup WebSocket
+      ws.current = new WebSocket(BACKEND_URL);
+
+      ws.current.onopen = () => {
+        setStatus('Connected. Speak now.');
+        console.log('WS Connected');
+      };
+
+      ws.current.onmessage = async (e) => {
+        const message = JSON.parse(e.data);
+
+        if (message.type === 'audio') {
+          console.log('Received audio chunk');
+          setIsSpeaking(true);
+          if (speakingTimeout.current) clearTimeout(speakingTimeout.current);
+          speakingTimeout.current = setTimeout(() => setIsSpeaking(false), 1500);
+
+          // Play audio chunk
+          try {
+            const { sound } = await Audio.Sound.createAsync(
+              { uri: `data:audio/wav;base64,${message.data}` },
+              { shouldPlay: true }
+            );
+            // Auto-unload after playing to prevent memory leak
+            sound.setOnPlaybackStatusUpdate(status => {
+              if (status.isLoaded && status.didJustFinish) {
+                sound.unloadAsync();
+              }
+            });
+          } catch (error) {
+            console.error('Playback Error:', error);
+          }
+        } else if (message.type === 'show_task') {
+          console.log('New Task Signal:', message.data);
+          setTargetTask(message.data);
+        } else if (message.type === 'text') {
+          // Handle text updates if needed (e.g. live transcript)
+        }
+      };
+
+      // 2. Setup Audio Recording (Streaming)
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      setRecording(recording);
+
+      // 3. Setup Vision (1 FPS)
+      const visionInterval = setInterval(async () => {
+        if (cameraRef.current && isLive) {
+          const photo = await cameraRef.current.takePictureAsync({
+            quality: 0.1,
+            base64: true,
+            skipProcessing: true,
+          });
+          if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+            ws.current.send(JSON.stringify({
+              type: 'video',
+              data: photo.base64
+            }));
+          }
+        }
+      }, 1000);
+
+      // Clean up interval on stop
+      ws.current.onclose = () => clearInterval(visionInterval);
+
+    } catch (err) {
+      console.error('Failed to start session', err);
+      setIsLive(false);
+      setStatus('Error');
+    }
+  };
+
+  const stopSession = async () => {
+    setIsLive(false);
+    setStatus('Idle');
+    if (recording) {
+      await recording.stopAndUnloadAsync();
+      setRecording(null);
+    }
+    if (ws.current) {
+      ws.current.close();
+    }
+  };
+
+  if (!permission || !audioPermission) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Permissions Required</Text>
+        <TouchableOpacity style={styles.button} onPress={() => requestPermission()}>
+          <Text style={styles.buttonText}>Grant Access</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.brand}>SpeakBack</Text>
+        <View style={styles.headerRight}>
+          <TouchableOpacity
+            style={[styles.modeToggle, showNews && styles.modeToggleActive]}
+            onPress={() => setShowNews(!showNews)}
+          >
+            <Newspaper color={showNews ? '#fff' : '#6b8099'} size={20} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modeToggle, mode === 'caregiver' && styles.modeToggleActive]}
+            onPress={() => setMode(mode === 'patient' ? 'caregiver' : 'patient')}
+          >
+            <Users color={mode === 'caregiver' ? '#fff' : '#6b8099'} size={20} />
+          </TouchableOpacity>
+          <View style={styles.statusBadge}>
+            <Animated.View style={[styles.pulseDot, animatedPulseStyle]} />
+            <Text style={styles.statusText}>{status}</Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.content}>
+        {showOnboarding && !userProfile ? (
+          <ProfileSetup
+            onComplete={(profile) => {
+              setUserProfile(profile);
+              setShowOnboarding(false);
+            }}
+          />
+        ) : mode === 'caregiver' ? (
+          <CaregiverDashboard />
+        ) : isLive ? (
+          <View style={styles.liveContainer}>
+            {showNews ? (
+              <NewsReader items={mockNews} />
+            ) : (
+              <CameraView style={styles.camera} facing="front" ref={cameraRef}>
+                <View style={styles.indicatorContainer}>
+                  {isSpeaking ? (
+                    <>
+                      <Waveform />
+                      <Text style={styles.indicatorText}>Gemini is speaking...</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Activity color="#3b9eff" size={48} />
+                      <Text style={styles.indicatorText}>Gemini is listening...</Text>
+                    </>
+                  )}
+                </View>
+              </CameraView>
+            )}
+
+            {targetTask && (
+              <Animated.View entering={FadeInUp} style={styles.flashcardContainer}>
+                <View style={styles.flashcard}>
+                  <Text style={styles.flashcardTitle}>WHAT IS THIS?</Text>
+                  <View style={styles.flashcardImagePlaceholder}>
+                    <Text style={styles.placeholderIcon}>
+                      {targetTask === 'apple' ? '🍎' :
+                        targetTask === 'car' ? '🚗' :
+                          targetTask === 'dog' ? '🐶' :
+                            targetTask === 'phone' ? '📱' :
+                              targetTask === 'book' ? '📖' : '❓'}
+                    </Text>
+                    <Text style={styles.placeholderText}>{targetTask.toUpperCase()}</Text>
+                  </View>
+                  <TouchableOpacity onPress={() => setTargetTask(null)} style={styles.closeTask}>
+                    <Text style={styles.closeTaskText}>CLOSE</Text>
+                  </TouchableOpacity>
+                </View>
+              </Animated.View>
+            )}
+
+            <AACBar onPress={(need) => {
+              if (ws.current) {
+                ws.current.send(JSON.stringify({ type: 'emergency_need', data: need }));
+              }
+            }} />
+          </View>
+        ) : (
+          <View style={styles.hero}>
+            <Mic color="#3b9eff" size={64} strokeWidth={1} />
+            <Text style={styles.heroText}>Your gentle therapist is ready.</Text>
+            <Text style={styles.heroSub}>Tap below to begin your session.</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.footer}>
+        {!isLive ? (
+          <TouchableOpacity style={styles.mainAction} onPress={startSession}>
+            <Play color="#fff" size={32} />
+            <Text style={styles.mainActionText}>TAP TO START</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.liveActions}>
+            <TouchableOpacity
+              style={[styles.mainAction, styles.speakAction]}
+              onPress={() => {
+                if (ws.current) ws.current.send(JSON.stringify({ type: 'manual_end_turn' }));
+              }}
+            >
+              <Mic color="#fff" size={32} />
+              <Text style={styles.mainActionText}>SPEAK NOW</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.mainAction, styles.stopAction, { marginTop: 16 }]} onPress={stopSession}>
+              <StopCircle color="#fff" size={32} />
+              <Text style={styles.mainActionText}>END SESSION</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#07090f',
+  },
+  header: {
+    padding: 24,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  brand: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: -1,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  modeToggle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  modeToggleActive: {
+    backgroundColor: '#3b9eff',
+    borderColor: '#3b9eff',
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(59, 158, 255, 0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 100,
+    borderWidth: 1,
+    borderColor: 'rgba(59, 158, 255, 0.2)',
+  },
+  pulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#3b9eff',
+    marginRight: 8,
+  },
+  statusText: {
+    color: '#3b9eff',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+  },
+  liveContainer: {
+    flex: 1,
+    width: '100%',
+  },
+  camera: {
+    width: '100%',
+    height: width * 1.3,
+    borderRadius: 30,
+    overflow: 'hidden',
+    backgroundColor: '#1a1a1a',
+  },
+  flashcardContainer: {
+    position: 'absolute',
+    top: 40,
+    left: 20,
+    right: 20,
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  flashcard: {
+    width: '100%',
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 20,
+  },
+  flashcardTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#6b8099',
+    letterSpacing: 2,
+    marginBottom: 20,
+  },
+  flashcardImagePlaceholder: {
+    width: 150,
+    height: 150,
+    backgroundColor: '#f8fafd',
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  placeholderIcon: {
+    fontSize: 64,
+  },
+  placeholderText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1a1a1a',
+    marginTop: 8,
+  },
+  closeTask: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    backgroundColor: 'rgba(59, 158, 255, 0.1)',
+  },
+  closeTaskText: {
+    color: '#3b9eff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  indicatorContainer: {
+    padding: 20,
+    backgroundColor: 'rgba(7, 9, 15, 0.8)',
+    borderRadius: 100,
+    alignItems: 'center',
+  },
+  indicatorText: {
+    color: '#fff',
+    fontSize: 12,
+    marginTop: 8,
+    fontWeight: '600',
+  },
+  hero: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroText: {
+    color: '#fff',
+    fontSize: 28,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginTop: 24,
+  },
+  heroSub: {
+    color: '#6b8099',
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 12,
+  },
+  footer: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  mainAction: {
+    backgroundColor: '#3b9eff',
+    width: width * 0.8,
+    height: 80,
+    borderRadius: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#3b9eff',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  speakAction: {
+    backgroundColor: '#2dcc8f',
+    shadowColor: '#2dcc8f',
+  },
+  liveActions: {
+    width: '100%',
+    alignItems: 'center',
+  },
+  stopAction: {
+    backgroundColor: '#ff5b5b',
+    shadowColor: '#ff5b5b',
+  },
+  mainActionText: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: '800',
+    marginLeft: 12,
+    letterSpacing: 2,
+  },
+  button: {
+    backgroundColor: '#3b9eff',
+    padding: 16,
+    borderRadius: 12,
+    marginTop: 24,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '800',
+    letterSpacing: 2,
+  },
+  title: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '700',
+  }
+});
