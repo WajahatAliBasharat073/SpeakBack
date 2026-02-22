@@ -1,0 +1,66 @@
+# SpeakBack Comprehensive Gitignore
+
+# Credentials and Environment
+.env
+.env.*
+backend/.env
+frontend/.env
+frontend/firebaseConfig.ts
+google-services.json
+GoogleService-Info.plist
+*.pem
+*.key
+
+# Dependencies
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+.venv/
+backend/.venv/
+env/
+venv/
+bin/
+lib/
+share/
+include/
+
+# Build and Expo
+.expo/
+dist/
+web-build/
+*.tsbuildinfo
+/ios
+/android
+.kotlin/
+*.jks
+*.p8
+*.p12
+*.mobileprovision
+
+# Python related
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.python-version
+backend/__pycache__/
+backend/.pytest_cache/
+
+# IDE and Project Files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+speakback-architecture.html
+roadmap.md.pdf
+Lessons/
+
+# Debug and Logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+.metro-health-check*
